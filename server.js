@@ -1,14 +1,15 @@
+
 const express = require('express');
+const cors = require('cors');
 const app = express();
 const PORT = process.env.PORT || 3000;
+
+app.use(cors());
+app.use(express.json());
 
 app.get('/', (req, res) => {
   res.send('服务正常');
 });
-
-app.listen(PORT, () => {
-  console.log(`服务器跑起来了，端口 ${PORT}`);
-});app.use(express.json());
 
 app.post('/chat', async (req, res) => {
   const { message } = req.body;
@@ -29,4 +30,8 @@ app.post('/chat', async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: '出错了' });
   }
+});
+
+app.listen(PORT, () => {
+  console.log(`服务器跑起来了，端口 ${PORT}`);
 });
