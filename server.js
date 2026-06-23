@@ -111,13 +111,38 @@ app.post('/chat', async (req, res) => {
     const { data: settings } = await supabase.from('settings').select('*').eq('session_id', 'global').single();
     const systemPrompt = settings?.system_prompt || '你是一个友善的助手。';
 
+    // 联网搜索
+    let searchContext = '';
+    if (settings?.web_search && process.env.TAVILY_API_KEY) {
+      try {
+        const tavilyRes = await fetch('https://api.tavily.com/search', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            api_key: process.env.TAVILY_API_KEY,
+            query: message,
+            max_results: 3,
+            search_depth: 'basic',
+          })
+        });
+        const tavilyData = await tavilyRes.json();
+        if (tavilyData.results?.length) {
+          searchContext = '\n\n联网搜索结果：\n' + tavilyData.results.map(r => `- ${r.title}：${r.content}`).join('\n');
+        }
+      } catch (e) {
+        console.error('Tavily 搜索失败:', e.message);
+      }
+    }
+
+    const systemContent = `${systemPrompt}\n\n之前的记忆：\n${memoryText}${searchContext}`;
+
     const aiResponse = await fetch('https://ai.lovelss.com/v1/chat/completions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${process.env.RELAY_API_KEY}` },
       body: JSON.stringify({
         model: model || 'claude-sonnet-4-6',
         messages: [
-          { role: 'system', content: `${systemPrompt}\n\n之前的记忆：\n${memoryText}` },
+          { role: 'system', content: systemContent },
           ...history.map(h => ({ role: h.role, content: h.content }))
         ]
       })
