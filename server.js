@@ -142,9 +142,18 @@ app.post('/chat', async (req, res) => {
       body: JSON.stringify({
         model: model || 'claude-sonnet-4-6',
         messages: [
-          { role: 'system', content: systemContent },
-          ...history.map(h => ({ role: h.role, content: h.content }))
-        ]
+  {
+    role: 'system',
+    content: [
+      {
+        type: 'text',
+        text: systemContent,
+        cache_control: { type: 'ephemeral' }
+      }
+    ]
+  },
+  ...history.map(h => ({ role: h.role, content: h.content }))
+]
       })
     });
     const aiData = await aiResponse.json();
