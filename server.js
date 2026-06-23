@@ -56,6 +56,47 @@ app.put('/settings', async (req, res) => {
   res.json(data);
 });
 
+// 记忆库
+app.get('/memories', async (req, res) => {
+  const { data, error } = await supabase.from('memories').select('*').order('timestamp', { ascending: false });
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
+});
+
+app.delete('/memories/:id', async (req, res) => {
+  const { error } = await supabase.from('memories').delete().eq('id', req.params.id);
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ success: true });
+});
+
+// 用量记录
+app.get('/usage', async (req, res) => {
+  const { data, error } = await supabase.from('messages').select('input_tokens, output_tokens');
+  if (error) return res.status(500).json({ error: error.message });
+  const total_input = data.reduce((sum, m) => sum + (m.input_tokens || 0), 0);
+  const total_output = data.reduce((sum, m) => sum + (m.output_tokens || 0), 0);
+  const total_messages = data.length;
+  res.json({ total_input, total_output, total_messages });
+});
+
+// 导出数据
+app.get('/export', async (req, res) => {
+  const { data: sessions } = await supabase.from('sessions').select('*');
+  const { data: messages } = await supabase.from('messages').select('*');
+  const { data: memories } = await supabase.from('memories').select('*');
+  res.setHeader('Content-Disposition', 'attachment; filename="yan-backup.json"');
+  res.setHeader('Content-Type', 'application/json');
+  res.json({ sessions, messages, memories, exported_at: new Date() });
+});
+
+// 清空所有数据
+app.delete('/data/all', async (req, res) => {
+  await supabase.from('messages').delete().neq('id', 0);
+  await supabase.from('memories').delete().neq('id', 0);
+  await supabase.from('sessions').delete().neq('id', 0);
+  res.json({ success: true });
+});
+
 // 核心对话
 app.post('/chat', async (req, res) => {
   const { session_id, message, model } = req.body;
@@ -70,20 +111,26 @@ app.post('/chat', async (req, res) => {
     const { data: settings } = await supabase.from('settings').select('*').eq('session_id', 'global').single();
     const systemPrompt = settings?.system_prompt || '你是一个友善的助手。';
 
-    const messages = [
-      { role: 'system', content: `${systemPrompt}\n\n之前的记忆：\n${memoryText}` },
-      ...history.map(h => ({ role: h.role, content: h.content }))
-    ];
-
-    const response = await fetch('https://ai.lovelss.com/v1/chat/completions', {
+    const aiResponse = await fetch('https://ai.lovelss.com/v1/chat/completions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${process.env.RELAY_API_KEY}` },
-      body: JSON.stringify({ model: model || 'claude-sonnet-4-6', messages })
+      body: JSON.stringify({
+        model: model || 'claude-sonnet-4-6',
+        messages: [
+          { role: 'system', content: `${systemPrompt}\n\n之前的记忆：\n${memoryText}` },
+          ...history.map(h => ({ role: h.role, content: h.content }))
+        ]
+      })
     });
-    const aiData = await response.json();
+    const aiData = await aiResponse.json();
     const reply = aiData.choices[0].message.content;
+    const usage = aiData.usage || {};
 
-    await supabase.from('messages').insert({ session_id, role: 'assistant', content: reply });
+    await supabase.from('messages').insert({
+      session_id, role: 'assistant', content: reply,
+      input_tokens: usage.prompt_tokens || 0,
+      output_tokens: usage.completion_tokens || 0,
+    });
 
     if (history.length > 20) {
       const toCompress = history.slice(0, 10);
